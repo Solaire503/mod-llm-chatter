@@ -1619,6 +1619,29 @@ def process_group_player_msg_event(
         # bot selection — reuse here
         members = get_group_members(db, group_id)
 
+        # -- Companion conversation mode --
+        # A hand-authored companion gets a deep, multi-line
+        # 1:1 reply instead of an ambient one-shot reaction.
+        # Takes precedence over the conversation/single
+        # paths; falls through on failure (no dead air).
+        from chatter_companion import (
+            is_companion,
+            is_significant_for_companion,
+            handle_companion_player_msg,
+        )
+        if (int(config.get('LLMChatter.Companion.Enable', 1))
+                and is_significant_for_companion(
+                    player_message, bot_name)
+                and is_companion(db, bot_guid, config)):
+            if handle_companion_player_msg(
+                db, client, config, event_id, group_id,
+                bot, traits, stored_tone,
+                player_name, player_message,
+            ):
+                _mark_event(db, event_id, 'completed')
+                return True
+            # else fall through to the normal path
+
         # Check for item links in player message
         item_context = ""
         items_info = []
@@ -2737,8 +2760,9 @@ def build_idle_chatter_prompt(
                 f"Your memories from past "
                 f"adventures with {p_label}:\n"
                 f"{mem_lines}\n"
-                f"Reference one of these memories "
-                f"clearly — mention the place, "
+                f"Draw on these if one fits the "
+                f"moment — if you do reference a "
+                f"memory, mention the place, "
                 f"creature, or moment by name so "
                 f"{p_label} would recognise the "
                 f"callback. Keep it natural "
@@ -2757,11 +2781,12 @@ def build_idle_chatter_prompt(
                     f"{player_name}.\n\n"
                 )
             prompt += (
-                f"Say something in party chat that "
-                f"references one of your memories "
-                f"above. The memory should be the "
-                f"main point of your message, not "
-                f"a side note.\n"
+                f"You may reference these memories if "
+                f"one fits the moment naturally. If "
+                f"none feel relevant right now, just "
+                f"let them inform your familiarity and "
+                f"tone with this person -- don't force "
+                f"a callback.\n"
             )
             if chat_history:
                 prompt += (
@@ -2773,8 +2798,8 @@ def build_idle_chatter_prompt(
                 f"\n{_pick_length_hint(mode)}\n"
                 f"Rules:\n"
                 f"- No quotes, no emojis\n"
-                f"- The memory reference must be "
-                f"recognisable\n"
+                f"- If you reference a memory, make "
+                f"it recognisable\n"
                 f"- Don't repeat themes from "
                 f"recent chat\n"
                 f"- NEVER claim to have killed a "
@@ -3642,6 +3667,24 @@ def check_idle_group_chatter(
                 logger.info(
                     "[DEBUG] idle: no bots in "
                     "traits table")
+            return False
+
+        # Suppress idle chatter from companion bots that
+        # are mid-conversation (cooldown window active).
+        from chatter_companion import (
+            is_companion_cooldown_active,
+        )
+        all_bots = [
+            b for b in all_bots
+            if not is_companion_cooldown_active(
+                group_id, b['bot_guid']
+            )
+        ]
+        if not all_bots:
+            if _dbg:
+                logger.info(
+                    "[DEBUG] idle: all bots in "
+                    "companion cooldown")
             return False
 
         # RNG gate

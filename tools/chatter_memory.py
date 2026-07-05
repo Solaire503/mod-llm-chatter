@@ -1079,12 +1079,105 @@ def rehydrate_active_sessions(db):
 # MEMORY RETRIEVAL
 # ============================================================
 
+# Recency weighting for memory recall. The pool is capped
+# so very long histories do not bloat the weighting pass;
+# the weight decays exponentially with recency rank so
+# recent memories dominate while old ones still surface
+# occasionally.
+_MEMORY_POOL_CAP = 50
+_MEMORY_RECENCY_DECAY = 0.6
+
+
 def get_bot_memories(
     db, bot_guid, player_guid, count=3,
     exclude_first_meeting=False,
 ):
-    """Retrieve random active memories for a
-    bot-player pair.
+    """Retrieve active memories for a bot-player pair,
+    weighted toward recent ones.
+
+    Recent memories are significantly more likely to be
+    selected, but older memories still surface
+    occasionally (exponential recency weighting via
+    weighted sampling without replacement).
+
+    Returns list of memory strings (may be empty).
+    """
+    try:
+        extra = (
+            " AND memory_type != 'first_meeting'"
+            if exclude_first_meeting else ""
+        )
+        cursor = db.cursor(dictionary=True)
+        # Pull the candidate pool most-recent-first. id is
+        # monotonic, so it is a reliable recency proxy.
+        cursor.execute(
+            "SELECT id, memory"
+            " FROM llm_bot_memories"
+            " WHERE bot_guid = %s"
+            "   AND player_guid = %s"
+            "   AND active = 1"
+            + extra +
+            " ORDER BY id DESC"
+            " LIMIT %s",
+            (bot_guid, player_guid, _MEMORY_POOL_CAP),
+        )
+        pool = cursor.fetchall()
+        if not pool:
+            return []
+
+        # Recency-weighted sampling without replacement.
+        # pool[0] is the most recent (rank 0); the weight
+        # decays exponentially with rank. Efraimidis-
+        # Spirakis key: larger key = more likely chosen,
+        # so recent memories dominate while old ones keep
+        # a small, non-zero chance to surface.
+        if len(pool) <= count:
+            chosen = pool
+        else:
+            scored = []
+            for rank, row in enumerate(pool):
+                weight = _MEMORY_RECENCY_DECAY ** rank
+                key = random.random() ** (1.0 / weight)
+                scored.append((key, rank, row))
+            scored.sort(key=lambda t: t[0], reverse=True)
+            top = scored[:count]
+            # Present most-recent-first for stable order.
+            top.sort(key=lambda t: t[1])
+            chosen = [t[2] for t in top]
+
+        ids = [row['id'] for row in chosen]
+        placeholders = ','.join(['%s'] * len(ids))
+        cursor.execute(
+            "UPDATE llm_bot_memories"
+            " SET used = 1,"
+            " last_used_at = NOW()"
+            " WHERE id IN (%s)"
+            % placeholders,
+            tuple(ids),
+        )
+        db.commit()
+        return [row['memory'] for row in chosen]
+    except Exception:
+        logger.error(
+            f"Memory retrieval failed for "
+            f"bot={bot_guid} player={player_guid}",
+            exc_info=True,
+        )
+        return []
+
+
+def get_all_bot_memories(
+    db, bot_guid, player_guid, limit=20,
+    exclude_first_meeting=True,
+):
+    """Load every active memory for a bot-player pair,
+    most-recent-first, up to `limit`.
+
+    Unlike get_bot_memories(), this does NOT sample or
+    weight — it returns the full recent set for rich
+    companion conversations. Read-only: it does not flip
+    used/last_used_at, since the whole set is loaded each
+    turn and that bookkeeping would be meaningless here.
 
     Returns list of memory strings (may be empty).
     """
@@ -1095,35 +1188,20 @@ def get_bot_memories(
         )
         cursor = db.cursor(dictionary=True)
         cursor.execute(
-            "SELECT id, memory"
+            "SELECT memory"
             " FROM llm_bot_memories"
             " WHERE bot_guid = %s"
             "   AND player_guid = %s"
             "   AND active = 1"
             + extra +
-            " ORDER BY RAND()"
+            " ORDER BY id DESC"
             " LIMIT %s",
-            (bot_guid, player_guid, count),
+            (bot_guid, player_guid, int(limit)),
         )
-        rows = cursor.fetchall()
-        if rows:
-            ids = [row['id'] for row in rows]
-            placeholders = ','.join(
-                ['%s'] * len(ids)
-            )
-            cursor.execute(
-                "UPDATE llm_bot_memories"
-                " SET used = 1,"
-                " last_used_at = NOW()"
-                " WHERE id IN (%s)"
-                % placeholders,
-                tuple(ids),
-            )
-            db.commit()
-        return [row['memory'] for row in rows]
+        return [row['memory'] for row in cursor.fetchall()]
     except Exception:
         logger.error(
-            f"Memory retrieval failed for "
+            f"Bulk memory retrieval failed for "
             f"bot={bot_guid} player={player_guid}",
             exc_info=True,
         )

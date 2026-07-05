@@ -2040,6 +2040,76 @@ LLMChatter.Backstory.IdleChance = 25
 LLMChatter.Backstory.ProximityChance = 15
 
 ###############################################################################
+# COMPANION MODE [BRIDGE]
+#
+#   Deeper, multi-line conversational replies for hand-authored
+#   "companion" bots when a real player speaks to them in PARTY chat.
+#   A companion is detected by a long backstory (see BackstoryMinChars).
+#   These replies load the full backstory and all shared memories, use a
+#   larger token budget, and briefly suppress that bot's other chatter so
+#   meaningful moments are not stomped by ambient barks.
+###############################################################################
+
+#
+#   LLMChatter.Companion.Enable
+#       Master switch for companion conversation mode.
+#       Default: 1
+#
+LLMChatter.Companion.Enable = 1
+
+#
+#   LLMChatter.Companion.BackstoryMinChars
+#       Minimum backstory length (characters) for a bot to be
+#       treated as a companion. Hand-authored companions have long
+#       backstories; this is a pragmatic proxy until an explicit
+#       flag column exists.
+#       Default: 500
+#
+LLMChatter.Companion.BackstoryMinChars = 500
+
+#
+#   LLMChatter.Companion.MaxMemories
+#       Maximum shared memories loaded into a companion prompt
+#       (most recent first). Caps prompt size on long histories.
+#       Default: 20
+#
+LLMChatter.Companion.MaxMemories = 20
+
+#
+#   LLMChatter.Companion.HistoryLimit
+#       Recent party chat lines included as conversation context
+#       for companion replies. Higher than the normal limit so the
+#       companion remembers more of the exchange.
+#       Default: 35
+#
+LLMChatter.Companion.HistoryLimit = 35
+
+#
+#   LLMChatter.Companion.MaxTokens
+#       Response token budget for companion replies. Larger than
+#       normal so the bot can speak across several lines.
+#       Default: 450
+#
+LLMChatter.Companion.MaxTokens = 450
+
+#
+#   LLMChatter.Companion.MaxLines
+#       Maximum number of sequential chat lines a single companion
+#       reply may be split into (multi-line delivery).
+#       Default: 4
+#
+LLMChatter.Companion.MaxLines = 4
+
+#
+#   LLMChatter.Companion.IdleSuppressSeconds
+#       After a companion reply, suppress that bot's idle chatter and
+#       event reactions for this many seconds so random barks do not
+#       stomp on a meaningful conversation.
+#       Default: 60
+#
+LLMChatter.Companion.IdleSuppressSeconds = 60
+
+###############################################################################
 # EMOTE REACTION SYSTEM
 ###############################################################################
 

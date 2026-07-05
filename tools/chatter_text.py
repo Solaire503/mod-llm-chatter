@@ -181,13 +181,19 @@ def _sanitize_action(raw_action) -> Optional[str]:
 
 
 def cleanup_message(
-    message: str, action: str = None
+    message: str, action: str = None,
+    preserve_leading_action: bool = False,
 ) -> str:
     """Clean up any formatting issues from LLM output.
 
     If action is provided (from structured JSON),
     prepend *action* and skip Phase 1/2 regex
     narration detection (JSON supersedes heuristic).
+
+    If preserve_leading_action is True, a leading
+    *gesture* is kept rather than stripped — used by the
+    companion path, where inline asterisk gestures are an
+    intentional part of the message.
     """
     result = message
 
@@ -213,9 +219,12 @@ def cleanup_message(
     # gets stripped too.
     # Min 4 chars protects *ok*/*no* from removal;
     # max 60 covers realistic multi-word actions.
-    result = re.sub(
-        r'^\*[^*]{4,60}\*\s*', '', result
-    )
+    # Skipped for the companion path, where a leading
+    # *gesture* is intentional.
+    if not preserve_leading_action:
+        result = re.sub(
+            r'^\*[^*]{4,60}\*\s*', '', result
+        )
 
     # Structured action from JSON - prepend *action*.
     # This is the only source of narrator comments;

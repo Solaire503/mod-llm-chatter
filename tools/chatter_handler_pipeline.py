@@ -178,6 +178,16 @@ def run_group_handler(
         _mark_event(db, event_id, 'skipped')
         return False
 
+    # 4b. Companion suppression: if this bot is mid-
+    # conversation, skip its ambient event reactions so
+    # they do not stomp on a meaningful moment.
+    from chatter_companion import (
+        is_companion_cooldown_active,
+    )
+    if is_companion_cooldown_active(group_id, bot_guid):
+        _mark_event(db, event_id, 'skipped')
+        return False
+
     # 5. Traits lookup
     trait_data = get_bot_traits(
         db, group_id, bot_guid,
@@ -212,6 +222,7 @@ def run_group_handler(
 
     traits = trait_data['traits']
     stored_tone = trait_data.get('tone')
+    backstory = trait_data.get('backstory')
 
     # 8. Build bot dict
     if needs_reactor_from_db:
@@ -300,6 +311,19 @@ def run_group_handler(
                 prompt += (
                     f"\nCurrent mood: {mood_label}"
                 )
+
+        # 11b. Backstory injection — reuse the same
+        # XML-tagged format as the idle/proximity paths
+        # so the LLM sees a consistent presentation.
+        if backstory:
+            prompt += (
+                "\n<backstory>\n"
+                "Your history: " + backstory + "\n"
+                "Draw from this background naturally "
+                "if it fits the moment -- don't force "
+                "it.\n"
+                "</backstory>"
+            )
 
         # 12. Compute delay
         actual_delay = (
