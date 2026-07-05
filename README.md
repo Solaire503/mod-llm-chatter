@@ -12,6 +12,72 @@ Built from the ground up for **fantasy roleplay immersion**. Every system, perso
 
 ---
 
+## 🔱 About this fork
+
+This is [Solaire503](https://github.com/Solaire503)'s fork of
+[Hokken/mod-llm-chatter](https://github.com/Hokken/mod-llm-chatter).
+**Everything documented below is Hokken's original engine** — this fork
+builds an *action and social layer* on top of it: bots that don't just
+talk, but obey, answer, reach out, and carry their communities with them.
+
+A real exchange from this fork's test server (a player asking about an
+item that famously doesn't exist):
+
+```
+[General] Caelan: Where do I find the "Sword of a Thousand Truths"?
+[General] Lalatha: Caelan that's from South Park lol, not a real weapon.
+                   Go touch grass instead of trees
+[General] Mudim: Lalatha that was unnecessarily harsh. Caelan check the
+                 AH for upgrades instead
+[General] Caelan: Hey Lalatha...fuk u
+```
+
+One bot fact-checks you, a second bot defends you, and nobody invented a
+fake drop location — that's the fork's design philosophy in four lines:
+**ground everything checkable, let personality run wild.**
+
+### What the fork adds
+
+* **Natural-language commands** — say *"wait here"* or *"come with me"*
+  in party or whisper and the bot **does it** (~1 second, via
+  playerbots' own command system with your permissions) while
+  acknowledging in character. Hard command allowlists on both the
+  bridge and the server; full audit trail.
+* **Grounded game knowledge** — ask where a quest starts, who drops an
+  item, where an NPC lives: bots answer from the world database
+  (quests, spawn zones, drop rates, vendors), and **admit they don't
+  know** rather than hallucinate.
+* **Whisper conversations** — private 1:1 chat with full companion
+  depth, and **bots that occasionally whisper *you* first**: friends
+  and companions only, faction-checked, shared-history-scoped, and
+  heavily rate-limited so it stays rare and meaningful.
+* **Guild life** — bots reply in guild chat, and every guild gets a
+  **culture**: a personality layer auto-generated from the guild's
+  name (hand-editable) that bleeds into how members talk *everywhere*
+  — General, parties, broadcasts. A raider guild dunks; an RP guild
+  performs.
+* **Contextual broadcasting** — notable real events (boss kills,
+  deaths, milestone dings — including from solo bots) surface in zone
+  General chat and become shared context other bots can reference.
+* **Behavior-aware chat** — bots know their actual playerbot standing
+  orders. Tell one to stay, then ask why it's standing there.
+* **Companion flag** (`llm_bot_identities.is_manual`) — explicit
+  hand-authored companion roster instead of heuristics.
+
+Setup is identical to upstream (below); the fork's SQL migrations
+auto-apply and every new option is documented in
+`conf/mod_llm_chatter.conf.dist` (look for the Commands, Whisper,
+GuildChatter/GuildCulture, SoloChatter, Broadcast, and Knowledge
+sections). Requires [mod-playerbots](https://github.com/mod-playerbots/mod-playerbots)
+compiled in the same tree.
+
+*Full credit to [Hokken](https://github.com/Hokken) for the original
+module and the conversation engine this stands on. Upstream continues
+to evolve (including its own guild chatter) — reconciliation of the two
+guild approaches is planned.*
+
+---
+
 <p align="center"><a href="https://discord.gg/9UBW7ZDZvY"><img src="https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join Discord"></a></p>
 
 > See my other module: **[mod-llm-guide](https://github.com/Hokken/mod-llm-guide)** — AI-powered in-game assistant
