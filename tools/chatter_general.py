@@ -360,9 +360,16 @@ def _build_general_response_prompt(
     trait_str = ', '.join(traits)
     tone = pick_random_tone(mode)
     mood = pick_random_mood(mode)
-    twist = maybe_get_creative_twist(
-        chance=1.0, mode=mode
-    )
+    # Direct replies should answer, not derail: never
+    # twist when the player asked a question, only
+    # occasionally otherwise. (Was chance=1.0 — every
+    # reply was ORDERED to go off-topic, hence bots
+    # appending penguin trivia to leveling advice.)
+    twist = None
+    if '?' not in (player_message or ''):
+        twist = maybe_get_creative_twist(
+            chance=0.15, mode=mode
+        )
 
     rp_context = ""
     if is_rp:
@@ -471,6 +478,9 @@ def _build_general_response_prompt(
         f"- Don't repeat what they said\n"
         f"- If there's chat history, stay "
         f"consistent with the conversation\n"
+        f"- Never claim someone said or agreed to "
+        f"something unless it actually appears in "
+        f"the chat history\n"
         f"- Keep it brief - this is General chat, "
         f"not a private conversation\n"
     )
@@ -770,6 +780,17 @@ def process_general_player_msg_event(
                     )
                 )
 
+        # Game knowledge lookup: ground factual
+        # gameplay questions in world-DB data.
+        # Lazy import, fail-soft ('' = not a data
+        # question).
+        from chatter_knowledge import (
+            lookup_game_knowledge,
+        )
+        knowledge_block = lookup_game_knowledge(
+            client, config, player_message,
+        )
+
         # Build and send first bot prompt
         allow_action = (mode == 'roleplay')
         prompt1 = _build_general_response_prompt(
@@ -785,6 +806,16 @@ def process_general_player_msg_event(
             zone_flavor=zone_flavor,
             subzone_name=subzone_name,
             subzone_lore=subzone_lore,
+        )
+        if knowledge_block:
+            prompt1 += knowledge_block
+
+        # Guild culture bleed (lazy import).
+        from chatter_guild import (
+            get_bot_culture_line,
+        )
+        prompt1 += get_bot_culture_line(
+            db, client, config, bot1_guid,
         )
 
         max_tokens = int(config.get(

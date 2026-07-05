@@ -7,6 +7,8 @@
 #include "Config.h"
 #include "Log.h"
 
+#include <sstream>
+
 namespace
 {
 template <typename T>
@@ -55,6 +57,56 @@ void LLMChatterConfig::LoadConfig()
         GetChatterOption<uint32>(
             "LLMChatter.PartyGate."
             "UrgentMinGapSeconds", 0);
+
+    // Guild / whisper forwarding
+    _guildChatterEnable = GetChatterOption<bool>(
+        "LLMChatter.GuildChatter.Enable", true);
+    _whisperChatterEnable = GetChatterOption<bool>(
+        "LLMChatter.WhisperChatter.Enable", true);
+
+    // Solo-bot experience events
+    _soloChatterEnable = GetChatterOption<bool>(
+        "LLMChatter.SoloChatter.Enable", true);
+    _soloKillChance = GetChatterOption<uint32>(
+        "LLMChatter.SoloChatter.KillChance", 15);
+    _soloLevelupChance = GetChatterOption<uint32>(
+        "LLMChatter.SoloChatter.LevelupChance", 50);
+    _soloDeathChance = GetChatterOption<uint32>(
+        "LLMChatter.SoloChatter.DeathChance", 10);
+    _soloBotCooldown = GetChatterOption<uint32>(
+        "LLMChatter.SoloChatter.BotCooldownSeconds", 900);
+
+    // LLM-issued playerbot commands (Tier 1)
+    _commandsEnable = GetChatterOption<bool>(
+        "LLMChatter.Commands.Enable", true);
+    _commandsPollMs = GetChatterOption<uint32>(
+        "LLMChatter.Commands.PollMs", 1000);
+    // A zero here would poll every world tick.
+    if (_commandsPollMs < 100)
+        _commandsPollMs = 100;
+    _commandsRequireSameGroup = GetChatterOption<bool>(
+        "LLMChatter.Commands.RequireSameGroup", true);
+    {
+        std::string raw = GetChatterOption<std::string>(
+            "LLMChatter.Commands.Allowlist",
+            "follow,stay,flee,grind,passive,attack,"
+            "co ,nc ,reset,los,formation");
+        _commandsAllowlist.clear();
+        std::stringstream allowStream(raw);
+        std::string token;
+        while (std::getline(allowStream, token, ','))
+        {
+            // Keep trailing spaces ("co " / "nc " are
+            // prefix rules); strip only CR/LF/tabs.
+            while (!token.empty()
+                && (token.back() == '\r'
+                    || token.back() == '\n'
+                    || token.back() == '\t'))
+                token.pop_back();
+            if (!token.empty())
+                _commandsAllowlist.push_back(token);
+        }
+    }
 
     // Event system settings
     _useEventSystem = GetChatterOption<bool>("LLMChatter.UseEventSystem", true);

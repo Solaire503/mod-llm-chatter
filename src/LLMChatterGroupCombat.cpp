@@ -150,6 +150,184 @@ void QueueStateCallout(
 
 } // namespace
 
+// ============================================================
+// Solo-bot experience events: ungrouped bots (and
+// bot-only groups) get their notable moments queued as
+// bot_solo_* events so they can post about them in the
+// zone's General channel. Gated by SoloEventAllowed
+// (feature flag, chance, real audience, per-bot
+// cooldown).
+// ============================================================
+
+static void HandleSoloKill(
+    Player* killer, Creature* killed)
+{
+    CreatureTemplate const* tmpl =
+        killed->GetCreatureTemplate();
+    if (!tmpl)
+        return;
+
+    uint32 rank = tmpl->rank;
+    bool isBoss = (rank == 3)
+        || (tmpl->type_flags
+            & CREATURE_TYPE_FLAG_BOSS_MOB)
+        || killed->IsDungeonBoss()
+        || _namedBossEntries.count(
+            killed->GetEntry());
+    bool isRare = (rank == 2 || rank == 4);
+
+    // Only notable kills — solo grinding is endless;
+    // normal kills would flood General.
+    if (!isBoss && !isRare)
+        return;
+
+    if (!SoloEventAllowed(killer,
+            sLLMChatterConfig->_soloKillChance))
+        return;
+
+    std::string creatureName = killed->GetName();
+    uint32 creatureEntry = killed->GetEntry();
+
+    std::string extraData = "{"
+        + BuildBotIdentityFields(killer) + ","
+        "\"creature_name\":\"" +
+            JsonEscape(creatureName) + "\","
+        "\"creature_entry\":" +
+            std::to_string(creatureEntry) + ","
+        "\"is_boss\":" +
+            std::string(
+                isBoss ? "true" : "false") + ","
+        "\"is_rare\":" +
+            std::string(
+                isRare ? "true" : "false") + ","
+        "\"group_id\":0,"
+        + BuildBotStateJson(killer) + "}";
+
+    extraData = EscapeString(extraData);
+
+    QueueChatterEvent(
+        "bot_solo_kill",
+        "player",
+        killer->GetZoneId(),
+        killer->GetMapId(),
+        GetChatterEventPriority("bot_group_kill"),
+        "",
+        killer->GetGUID().GetCounter(),
+        killer->GetName(),
+        0,
+        creatureName,
+        creatureEntry,
+        extraData,
+        GetReactionDelaySeconds("bot_group_kill"),
+        120,
+        false
+    );
+}
+
+static void HandleSoloLevelup(
+    Player* player, uint8 oldLevel)
+{
+    uint8 newLevel = player->GetLevel();
+    if (newLevel <= oldLevel)
+        return;
+
+    // Milestones only (x0) — every ding from hundreds
+    // of world bots would drown General.
+    if (newLevel % 10 != 0)
+        return;
+
+    Map* lvlMap = player->GetMap();
+    if (lvlMap
+        && (lvlMap->IsRaid()
+            || lvlMap->IsBattleground()))
+        return;
+
+    if (!SoloEventAllowed(player,
+            sLLMChatterConfig->_soloLevelupChance))
+        return;
+
+    std::string extraData = "{"
+        + BuildBotIdentityFields(player) + ","
+        "\"old_level\":" +
+            std::to_string(oldLevel) + ","
+        "\"is_bot\":1,"
+        "\"leveler_name\":\"" +
+            JsonEscape(player->GetName()) + "\","
+        "\"group_id\":0"
+        "}";
+
+    extraData = EscapeString(extraData);
+
+    QueueChatterEvent(
+        "bot_solo_levelup",
+        "player",
+        player->GetZoneId(),
+        player->GetMapId(),
+        GetChatterEventPriority(
+            "bot_group_levelup"),
+        "",
+        player->GetGUID().GetCounter(),
+        player->GetName(),
+        0,
+        "",
+        0,
+        extraData,
+        GetReactionDelaySeconds(
+            "bot_group_levelup"),
+        120,
+        false
+    );
+}
+
+static void HandleSoloDeath(
+    Creature* killer, Player* killed)
+{
+    if (!SoloEventAllowed(killed,
+            sLLMChatterConfig->_soloDeathChance))
+        return;
+
+    std::string killerName =
+        killer ? killer->GetName() : "";
+    uint32 killerEntry =
+        killer ? killer->GetEntry() : 0;
+
+    std::string extraData = "{"
+        + BuildBotIdentityFields(killed) + ","
+        "\"dead_name\":\"" +
+            JsonEscape(killed->GetName()) + "\","
+        "\"dead_guid\":" +
+            std::to_string(
+                killed->GetGUID().GetCounter())
+            + ","
+        "\"killer_name\":\"" +
+            JsonEscape(killerName) + "\","
+        "\"killer_entry\":" +
+            std::to_string(killerEntry) + ","
+        "\"is_player_death\":false,"
+        "\"group_id\":0"
+        "}";
+
+    extraData = EscapeString(extraData);
+
+    QueueChatterEvent(
+        "bot_solo_death",
+        "player",
+        killed->GetZoneId(),
+        killed->GetMapId(),
+        GetChatterEventPriority("bot_group_death"),
+        "",
+        killed->GetGUID().GetCounter(),
+        killed->GetName(),
+        0,
+        killerName,
+        killerEntry,
+        extraData,
+        GetReactionDelaySeconds("bot_group_death"),
+        120,
+        false
+    );
+}
+
 void HandleGroupCreatureKillImpl(
     Player* killer, Creature* killed)
 {
@@ -165,11 +343,11 @@ void HandleGroupCreatureKillImpl(
         return;
 
     Group* group = killer->GetGroup();
-    if (!group)
+    if (!group || !GroupHasRealPlayer(group))
+    {
+        HandleSoloKill(killer, killed);
         return;
-
-    if (!GroupHasRealPlayer(group))
-        return;
+    }
 
     Player* reactor = nullptr;
     if (IsPlayerBot(killer))
@@ -275,11 +453,11 @@ void HandleGroupPlayerKilledByCreatureImpl(
         return;
 
     Group* group = killed->GetGroup();
-    if (!group)
+    if (!group || !GroupHasRealPlayer(group))
+    {
+        HandleSoloDeath(killer, killed);
         return;
-
-    if (!GroupHasRealPlayer(group))
-        return;
+    }
 
     uint32 groupId =
         group->GetGUID().GetCounter();
@@ -331,8 +509,14 @@ void HandleGroupPlayerKilledByCreatureImpl(
             _groupWipeCooldowns[groupId] =
                 now;
 
+            // A wipe means everyone is dead --
+            // dead bots can still speak in chat,
+            // so don't require a living reactor
+            // (a living-only filter here made
+            // this branch unreachable).
             Player* wipeReactor =
-                GetRandomBotInGroup(group);
+                GetRandomBotInGroup(
+                    group, nullptr, false);
             if (!wipeReactor)
                 return;
 
@@ -970,13 +1154,9 @@ void HandleGroupPlayerLevelChangedImpl(
     }
 
     Group* group = player->GetGroup();
-    if (!group)
+    if (!group || !GroupHasRealPlayer(group))
     {
-        return;
-    }
-
-    if (!GroupHasRealPlayer(group))
-    {
+        HandleSoloLevelup(player, oldLevel);
         return;
     }
 

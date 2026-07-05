@@ -4,6 +4,7 @@
 
 #include "LLMChatterAmbient.h"
 #include "LLMChatterConfig.h"
+#include "LLMChatterCommands.h"
 #include "LLMChatterDelivery.h"
 #include "LLMChatterGroup.h"
 #include "LLMChatterGroupInternal.h"
@@ -321,6 +322,7 @@ public:
 
         _lastTriggerTime = 0;
         _lastDeliveryTime = 0;
+        _lastCommandPollTime = 0;
         _lastEnvironmentCheckTime = 0;
         _lastTransportCheckTime = 0;
         _lastGoScanTime = 0;
@@ -343,6 +345,13 @@ public:
         {
             _lastDeliveryTime = now;
             DeliverPendingMessages();
+        }
+
+        if (now - _lastCommandPollTime
+            >= sLLMChatterConfig->_commandsPollMs)
+        {
+            _lastCommandPollTime = now;
+            ProcessPendingBotCommands();
         }
 
         if (now - _lastTriggerTime
@@ -444,6 +453,7 @@ public:
 private:
     uint32 _lastTriggerTime = 0;
     uint32 _lastDeliveryTime = 0;
+    uint32 _lastCommandPollTime = 0;
     uint32 _lastEnvironmentCheckTime = 0;
     uint32 _lastTransportCheckTime = 0;
     uint32 _lastGoScanTime = 0;

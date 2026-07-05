@@ -302,9 +302,17 @@ def _is_playerbot_command(message: str) -> bool:
     if msg in PLAYERBOT_COMMANDS:
         return True
 
-    # Command + argument (e.g. "cast Holy Light")
+    # Command + argument (e.g. "cast Holy Light").
+    # Natural-speech words are exempt: "follow me" /
+    # "stay here" are conversation (the Tier 1
+    # command classifier handles them); only the BARE
+    # word is playerbot syntax.
+    _natural_words = (
+        'follow', 'stay', 'flee', 'grind', 'attack',
+    )
     first_word = msg.split()[0]
-    if first_word in PLAYERBOT_COMMANDS:
+    if (first_word in PLAYERBOT_COMMANDS
+            and first_word not in _natural_words):
         return True
 
     # Multi-word command + argument
@@ -1619,6 +1627,30 @@ def process_group_player_msg_event(
         # bot selection — reuse here
         members = get_group_members(db, group_id)
 
+        # -- Natural-language command (Tier 1) --
+        # If the player is asking the addressed bot to
+        # DO something ("wait here", "come with me"),
+        # queue a playerbot command for the C++ poller
+        # and get an acknowledgment block for whichever
+        # reply path runs. '' when not a request.
+        from chatter_commands import (
+            maybe_queue_player_command,
+        )
+        command_ack = ''
+        requester_info = get_character_info_by_name(
+            db, player_name,
+        )
+        # Skip when multiple bots were addressed: the
+        # conversation path would drop the ack and the
+        # command would execute silently.
+        if requester_info and not multi_addressed:
+            command_ack = maybe_queue_player_command(
+                db, client, config, event_id,
+                bot_guid, bot_name,
+                requester_info['guid'], player_name,
+                player_message,
+            )
+
         # -- Companion conversation mode --
         # A hand-authored companion gets a deep, multi-line
         # 1:1 reply instead of an ambient one-shot reaction.
@@ -1630,13 +1662,15 @@ def process_group_player_msg_event(
             handle_companion_player_msg,
         )
         if (int(config.get('LLMChatter.Companion.Enable', 1))
-                and is_significant_for_companion(
-                    player_message, bot_name)
+                and (command_ack
+                     or is_significant_for_companion(
+                         player_message, bot_name))
                 and is_companion(db, bot_guid, config)):
             if handle_companion_player_msg(
                 db, client, config, event_id, group_id,
                 bot, traits, stored_tone,
                 player_name, player_message,
+                extra_context=command_ack,
             ):
                 _mark_event(db, event_id, 'completed')
                 return True
@@ -1676,10 +1710,28 @@ def process_group_player_msg_event(
                     items_info, bot['class']
                 )
 
+        # -- Game knowledge lookup --
+        # If the player asked a factual gameplay
+        # question, fetch verified world-DB facts to
+        # ground the reply (anti-hallucination).
+        # Lazy import, fail-soft ('' = no question).
+        # Skipped when a command fired: a behavior
+        # request is not a data question.
+        knowledge_block = ''
+        if not command_ack:
+            from chatter_knowledge import (
+                lookup_game_knowledge,
+            )
+            knowledge_block = lookup_game_knowledge(
+                client, config, player_message,
+            )
+
         # -- Conversation vs single reply --
         # Roll for multi-bot conversation when
         # >=2 bots are available. Mutual exclusion:
         # if conversation fires, skip second bot.
+        # A factual question gets a single focused
+        # answer, not group banter.
         used_conversation = False
         num_bots = len(all_bots)
         conv_chance = int(config.get(
@@ -1699,6 +1751,8 @@ def process_group_player_msg_event(
         )
         rng_conv = (
             not force_conv
+            and not knowledge_block
+            and not command_ack
             and num_bots >= 2
             and eff_conv_chance > 0
             and random.randint(1, 100)
@@ -1822,9 +1876,23 @@ def process_group_player_msg_event(
             memories=msg_memories,
             travel_context=travel_context,
         )
+        if knowledge_block:
+            prompt += knowledge_block
+        if command_ack:
+            prompt += command_ack
+
+        # Guild culture bleed (lazy import).
+        from chatter_guild import (
+            get_bot_culture_line,
+        )
+        prompt += get_bot_culture_line(
+            db, client, config, bot_guid,
+        )
 
         max_tokens = pick_random_max_tokens(config)
         if msg_memories:
+            max_tokens = max(max_tokens, 250)
+        if knowledge_block:
             max_tokens = max(max_tokens, 250)
         _pmsg_label = (
             'group_player_msg_memory'
@@ -3188,6 +3256,15 @@ def build_idle_conversation_prompt(
                 "side notes. Bots with memories "
                 "share them; bots without react "
                 "naturally."
+            )
+            parts.append(
+                "IMPORTANT: only the bot named in a "
+                "<past_memories> block was actually "
+                "there. Other bots must NOT say "
+                "\"remember when...\" or speak about "
+                "the event firsthand — they were not "
+                "present. They react as hearers: ask "
+                "questions, tease, express surprise."
             )
 
             if chat_history:

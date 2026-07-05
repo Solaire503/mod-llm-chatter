@@ -1,6 +1,7 @@
 """DB/query helpers extracted from chatter_shared (N15/N16)."""
 
 import logging
+import re
 import threading
 import time
 from typing import Dict, List, Optional, Tuple
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 _char_info_cache: dict = {}
 _talent_cache: dict = {}
 _online_cache: dict = {}
+_bot_strategy_cache: dict = {}
 _cache_lock = threading.Lock()
 
 
@@ -1058,6 +1060,69 @@ def get_character_info_by_name(
         return result
     except Exception:
         return None
+
+
+def get_bot_strategies(
+    db, bot_guid: int, config: dict = None
+) -> dict:
+    """Read a bot's saved playerbot strategies.
+
+    mod-playerbots persists each bot's strategy sets to
+    <playerbots db>.playerbots_db_store as key/value rows
+    ('co' = combat, 'nc' = non-combat) whenever a strategy
+    change is saved, formatted like '+tank aoe,+stay'.
+    The table is only written on strategy saves, so it
+    reflects standing orders, not moment-to-moment state —
+    and is typically populated for master-commanded bots
+    (exactly the companion audience).
+
+    Returns {'combat': [names], 'noncombat': [names]} with
+    only non-empty sets present; {} when the bot has no
+    saved row or the playerbots DB is unreachable.
+    Cached with 60-second TTL, 200-entry max.
+    """
+    cached = _cache_get(
+        _bot_strategy_cache, int(bot_guid), 60
+    )
+    if cached is not None:
+        return cached
+
+    pb_db = (config or {}).get(
+        'LLMChatter.PlayerbotsDatabase.Name',
+        'acore_playerbots',
+    ).strip().strip('"\'')
+    # Interpolated as an identifier — keep it strict.
+    if not re.fullmatch(r'\w+', pb_db):
+        return {}
+
+    result = {}
+    try:
+        cursor = db.cursor(dictionary=True)
+        cursor.execute(
+            f"SELECT `key`, `value` "
+            f"FROM {pb_db}.playerbots_db_store "
+            f"WHERE guid = %s AND `key` IN ('co', 'nc')",
+            (int(bot_guid),),
+        )
+        labels = {'co': 'combat', 'nc': 'noncombat'}
+        for row in cursor.fetchall():
+            names = [
+                s.strip().lstrip('+')
+                for s in (row['value'] or '').split(',')
+            ]
+            names = [n for n in names if n]
+            if names:
+                result[labels[row['key']]] = names
+        _cache_put(
+            _bot_strategy_cache, int(bot_guid), result, 200
+        )
+    except Exception:
+        logger.debug(
+            "Playerbot strategy read failed for bot=%s "
+            "(playerbots DB '%s' missing?)",
+            bot_guid, pb_db, exc_info=True,
+        )
+    return result
 
 
 def is_player_online(

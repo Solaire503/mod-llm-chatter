@@ -1015,7 +1015,19 @@ def build_plain_conversation_prompt(
 
     append_environmental_context(parts, current_weather)
 
-    parts.append(f"Speakers: {', '.join(bot_names)}")
+    speaker_bits = [
+        f"{b['name']} (level {b['level']})"
+        if b.get('level') else b['name']
+        for b in bots
+    ]
+    parts.append(f"Speakers: {', '.join(speaker_bits)}")
+    parts.append(
+        "Grounding: each speaker's REAL level is listed "
+        "above. If anyone mentions their own level, "
+        "progress, or a recent ding, it must match their "
+        "listed level — never invent level-ups or "
+        "milestones that didn't happen."
+    )
     parts.append(
         "Names: Sometimes use their name when addressing "
         "directly (maybe 1-2 times in a conversation), but "
@@ -1380,7 +1392,19 @@ def build_gossip_conversation_prompt(
         target, target_type, is_rp,
     )
 
-    parts.append(f"Speakers: {', '.join(bot_names)}")
+    speaker_bits = [
+        f"{b['name']} (level {b['level']})"
+        if b.get('level') else b['name']
+        for b in bots
+    ]
+    parts.append(f"Speakers: {', '.join(speaker_bits)}")
+    parts.append(
+        "Grounding: each speaker's REAL level is listed "
+        "above. If anyone mentions their own level, "
+        "progress, or a recent ding, it must match their "
+        "listed level — never invent level-ups or "
+        "milestones that didn't happen."
+    )
 
     seen_races = set()
     seen_classes = set()
@@ -1495,7 +1519,19 @@ def build_quest_conversation_prompt(
             f"Generate a casual General chat exchange about "
             f"a quest in {bots[0]['zone']}."
         )
-    parts.append(f"Speakers: {', '.join(bot_names)}")
+    speaker_bits = [
+        f"{b['name']} (level {b['level']})"
+        if b.get('level') else b['name']
+        for b in bots
+    ]
+    parts.append(f"Speakers: {', '.join(speaker_bits)}")
+    parts.append(
+        "Grounding: each speaker's REAL level is listed "
+        "above. If anyone mentions their own level, "
+        "progress, or a recent ding, it must match their "
+        "listed level — never invent level-ups or "
+        "milestones that didn't happen."
+    )
     parts.append(
         "Names: Sometimes use their name when addressing "
         "directly (maybe 1-2 times), but not every message."
@@ -1647,7 +1683,19 @@ def build_loot_conversation_prompt(
             f"Generate a casual General chat exchange about "
             f"a loot drop in {bots[0]['zone']}."
         )
-    parts.append(f"Speakers: {', '.join(bot_names)}")
+    speaker_bits = [
+        f"{b['name']} (level {b['level']})"
+        if b.get('level') else b['name']
+        for b in bots
+    ]
+    parts.append(f"Speakers: {', '.join(speaker_bits)}")
+    parts.append(
+        "Grounding: each speaker's REAL level is listed "
+        "above. If anyone mentions their own level, "
+        "progress, or a recent ding, it must match their "
+        "listed level — never invent level-ups or "
+        "milestones that didn't happen."
+    )
     parts.append(
         "Names: Sometimes use their name when addressing "
         "directly (maybe once), but not every message."
@@ -1793,7 +1841,19 @@ def build_event_conversation_prompt(
             f"They speak as players discussing the game, not "
             f"roleplaying their characters."
         )
-    parts.append(f"Speakers: {', '.join(bot_names)}")
+    speaker_bits = [
+        f"{b['name']} (level {b['level']})"
+        if b.get('level') else b['name']
+        for b in bots
+    ]
+    parts.append(f"Speakers: {', '.join(speaker_bits)}")
+    parts.append(
+        "Grounding: each speaker's REAL level is listed "
+        "above. If anyone mentions their own level, "
+        "progress, or a recent ding, it must match their "
+        "listed level — never invent level-ups or "
+        "milestones that didn't happen."
+    )
     parts.append(
         "Names: Sometimes use their name when addressing "
         "directly (maybe once), but not every message."
@@ -2317,8 +2377,18 @@ def build_spell_conversation_prompt(
             f"class ability in {bots[0]['zone']}."
         )
 
+    speaker_bits = [
+        f"{b['name']} (level {b['level']})"
+        if b.get('level') else b['name']
+        for b in bots
+    ]
     parts.append(
-        f"Speakers: {', '.join(bot_names)}"
+        f"Speakers: {', '.join(speaker_bits)}"
+    )
+    parts.append(
+        "Grounding: if anyone mentions their own "
+        "level or progress, it must match their "
+        "listed level — never invent level-ups."
     )
     parts.append(
         "Names: Sometimes use their name when "
@@ -2696,8 +2766,18 @@ def build_trade_conversation_prompt(
             f"{bots[0]['zone']}."
         )
 
+    speaker_bits = [
+        f"{b['name']} (level {b['level']})"
+        if b.get('level') else b['name']
+        for b in bots
+    ]
     parts.append(
-        f"Speakers: {', '.join(bot_names)}"
+        f"Speakers: {', '.join(speaker_bits)}"
+    )
+    parts.append(
+        "Grounding: if anyone mentions their own "
+        "level or progress, it must match their "
+        "listed level — never invent level-ups."
     )
     parts.append(
         "Names: Sometimes use their name when "

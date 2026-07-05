@@ -19,6 +19,7 @@
 #include "DatabaseEnv.h"
 #include "DBCStores.h"
 #include "Group.h"
+#include "Guild.h"
 #include "Log.h"
 #include "MapMgr.h"
 #include "ObjectAccessor.h"
@@ -769,6 +770,8 @@ public:
               {PLAYERHOOK_ON_LOGIN,
                PLAYERHOOK_ON_UPDATE,
                PLAYERHOOK_CAN_PLAYER_USE_CHANNEL_CHAT,
+               PLAYERHOOK_CAN_PLAYER_USE_GUILD_CHAT,
+               PLAYERHOOK_CAN_PLAYER_USE_PRIVATE_CHAT,
                PLAYERHOOK_ON_UPDATE_ZONE,
                PLAYERHOOK_ON_UPDATE_AREA,
                PLAYERHOOK_ON_PVP_KILL}) {}
@@ -847,6 +850,147 @@ public:
                  player->GetGUID().GetCounter(),
                  time(nullptr)});
         }
+    }
+
+    // ------------------------------------------------
+    // Guild chat forwarding: a real player spoke in
+    // guild chat; store history and queue an event so
+    // the bridge can have a guild bot reply.
+    // ------------------------------------------------
+    bool OnPlayerCanUseChat(
+        Player* player, uint32 type,
+        uint32 language, std::string& msg,
+        Guild* guild) override
+    {
+        if (!sLLMChatterConfig
+            || !sLLMChatterConfig->IsEnabled()
+            || !sLLMChatterConfig->_guildChatterEnable)
+            return true;
+
+        if (!player || !guild || IsPlayerBot(player))
+            return true;
+
+        // Hidden addon traffic (DBM/ElvUI version
+        // handshakes on the guild channel) is not
+        // conversation.
+        if (language == LANG_ADDON)
+        {
+            LogIgnoredAddonChat(
+                player, type, msg, "guild");
+            return true;
+        }
+
+        if (IsLikelyPlayerbotControlCommand(msg))
+            return true;
+
+        std::string safeMsg = NormalizeChatTextForDb(
+            msg, sLLMChatterConfig->_maxMessageLength);
+        if (safeMsg.empty())
+            return true;
+
+        CharacterDatabase.Execute(
+            "INSERT INTO llm_guild_chat_history "
+            "(guild_id, speaker_name, is_bot, message)"
+            " VALUES ({}, '{}', 0, '{}')",
+            guild->GetId(),
+            EscapeString(player->GetName()),
+            EscapeString(safeMsg));
+
+        std::string extraData = "{"
+            "\"guild_id\":" + std::to_string(
+                guild->GetId()) + ","
+            "\"guild_name\":\"" + JsonEscape(
+                guild->GetName()) + "\","
+            "\"player_name\":\"" + JsonEscape(
+                player->GetName()) + "\","
+            "\"player_guid\":" + std::to_string(
+                player->GetGUID().GetCounter()) + ","
+            "\"player_message\":\"" + JsonEscape(
+                safeMsg) + "\"}";
+        extraData = EscapeString(extraData);
+
+        QueueChatterEvent(
+            "player_guild_msg", "player",
+            player->GetZoneId(), player->GetMapId(),
+            GetChatterEventPriority(
+                "bot_group_player_msg"),
+            "", player->GetGUID().GetCounter(),
+            player->GetName(), 0, "", 0,
+            extraData, 2, 120, false);
+
+        return true;
+    }
+
+    // ------------------------------------------------
+    // Whisper forwarding: a real player whispered a
+    // bot with conversational text (playerbot control
+    // commands are left to mod-playerbots).
+    // ------------------------------------------------
+    bool OnPlayerCanUseChat(
+        Player* player, uint32 type,
+        uint32 language, std::string& msg,
+        Player* receiver) override
+    {
+        if (!sLLMChatterConfig
+            || !sLLMChatterConfig->IsEnabled()
+            || !sLLMChatterConfig
+                   ->_whisperChatterEnable)
+            return true;
+
+        if (!player || !receiver
+            || IsPlayerBot(player)
+            || !IsPlayerBot(receiver))
+            return true;
+
+        // Addon-to-addon whispers (DBM status
+        // pings etc.) are not conversation.
+        if (language == LANG_ADDON)
+        {
+            LogIgnoredAddonChat(
+                player, type, msg, "whisper");
+            return true;
+        }
+
+        if (IsLikelyPlayerbotControlCommand(msg))
+            return true;
+
+        std::string safeMsg = NormalizeChatTextForDb(
+            msg, sLLMChatterConfig->_maxMessageLength);
+        if (safeMsg.empty())
+            return true;
+
+        CharacterDatabase.Execute(
+            "INSERT INTO llm_whisper_history "
+            "(bot_guid, player_guid, from_bot, message)"
+            " VALUES ({}, {}, 0, '{}')",
+            receiver->GetGUID().GetCounter(),
+            player->GetGUID().GetCounter(),
+            EscapeString(safeMsg));
+
+        std::string extraData = "{"
+            + BuildBotIdentityFields(receiver) + ","
+            "\"player_name\":\"" + JsonEscape(
+                player->GetName()) + "\","
+            "\"player_guid\":" + std::to_string(
+                player->GetGUID().GetCounter()) + ","
+            "\"player_message\":\"" + JsonEscape(
+                safeMsg) + "\"}";
+        extraData = EscapeString(extraData);
+
+        QueueChatterEvent(
+            "player_whisper_msg", "player",
+            receiver->GetZoneId(),
+            receiver->GetMapId(),
+            GetChatterEventPriority(
+                "bot_group_player_msg"),
+            "",
+            receiver->GetGUID().GetCounter(),
+            receiver->GetName(),
+            player->GetGUID().GetCounter(),
+            player->GetName(), 0,
+            extraData, 1, 120, false);
+
+        return true;
     }
 
     bool OnPlayerCanUseChat(
@@ -992,10 +1136,37 @@ public:
                 return true;
         }
 
-        bool isQuestion =
-            !safeMsg.empty()
-            && safeMsg.back() == '?';
-        uint32 chance = isQuestion
+        // A question anywhere in the message, or a
+        // social opener ("evening all", "hey"), is
+        // direct engagement — such messages use the
+        // higher QuestionChance instead of the base
+        // ReactionChance so greetings stop being
+        // ignored. (Previously "question" meant only
+        // that the LAST character was '?'.)
+        bool isEngaging =
+            safeMsg.find('?') != std::string::npos;
+        if (!isEngaging)
+        {
+            std::string loweredMsg = safeMsg;
+            std::transform(loweredMsg.begin(),
+                           loweredMsg.end(),
+                           loweredMsg.begin(),
+                           ::tolower);
+            static char const* kOpeners[] = {
+                "hello", "hi ", "hey", "greetings",
+                "morning", "evening", "afternoon",
+                "yo ", "o/", "anyone", "sup"
+            };
+            for (char const* opener : kOpeners)
+            {
+                if (loweredMsg.rfind(opener, 0) == 0)
+                {
+                    isEngaging = true;
+                    break;
+                }
+            }
+        }
+        uint32 chance = isEngaging
             ? sLLMChatterConfig
                 ->_generalChatQuestionChance
             : sLLMChatterConfig

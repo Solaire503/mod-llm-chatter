@@ -34,7 +34,10 @@ from chatter_shared import (
     get_language_rule,
     build_bot_identity_from_dict,
 )
-from chatter_db import get_character_info_by_name
+from chatter_db import (
+    get_character_info_by_name,
+    get_bot_strategies,
+)
 from chatter_group_state import (
     _get_recent_chat,
     format_chat_history,
@@ -44,6 +47,7 @@ from chatter_memory import (
     get_all_bot_memories,
     sanitize_memory_for_prompt,
 )
+from chatter_knowledge import lookup_game_knowledge
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +59,7 @@ _DEFAULT_HISTORY_LIMIT = 35
 _DEFAULT_MAX_TOKENS = 450
 _DEFAULT_MAX_LINES = 4
 _DEFAULT_SUPPRESS_SECONDS = 60
+_DEFAULT_BEHAVIOR_ENABLE = 1
 
 
 def _cfg_int(config, key, default):
@@ -94,18 +99,28 @@ def _load_backstory(db, bot_guid):
 def is_companion(db, bot_guid, config=None):
     """Return True if this bot is a hand-authored companion.
 
-    Proxy signal: a backstory at least BackstoryMinChars
-    long. Single abstraction point — swap to an explicit
-    is_manual column here later without touching callers.
+    Companionship is an explicit flag:
+    llm_bot_identities.is_manual = 1, set by the server
+    owner. (The old backstory-length proxy is retired —
+    auto-generated backstories routinely crossed the
+    threshold, giving 47 accidental "companions" on one
+    test server.)
     """
-    backstory = _load_backstory(db, bot_guid)
-    if not backstory:
+    try:
+        cursor = db.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT is_manual FROM llm_bot_identities"
+            " WHERE bot_guid = %s",
+            (int(bot_guid),),
+        )
+        row = cursor.fetchone()
+        return bool(row and row.get('is_manual'))
+    except Exception:
+        logger.error(
+            "Companion flag check failed for bot=%s",
+            bot_guid, exc_info=True,
+        )
         return False
-    min_chars = _cfg_int(
-        config, 'LLMChatter.Companion.BackstoryMinChars',
-        _DEFAULT_MIN_CHARS,
-    )
-    return len(backstory.strip()) >= min_chars
 
 
 def is_significant_for_companion(player_message, bot_name):
@@ -131,6 +146,61 @@ def is_significant_for_companion(player_message, bot_name):
     if bot_name and bot_name.lower() in msg.lower():
         return True
     return False
+
+
+# ============================================================
+# BEHAVIOR CONTEXT (playerbot standing orders)
+# ============================================================
+# mod-playerbots saves each bot's strategy sets to
+# playerbots_db_store when the master issues strategy
+# commands. Translating the player-meaningful ones into
+# plain language lets a companion talk about what it has
+# actually been told to do ("You asked me to wait here").
+# Strategies not in this map are AI plumbing (chat, racials,
+# default, threat, ...) and are deliberately ignored.
+
+_STRATEGY_DESCRIPTIONS = {
+    # movement / stance (chat-shortcut toggles)
+    'stay': 'holding position where you were told to wait',
+    'follow': 'staying close and following',
+    'passive': 'keeping out of fights unless told otherwise',
+    'grind': 'roaming free and fighting anything nearby',
+    'free': 'moving about on your own judgement',
+    'move from group': 'keeping some distance from the group',
+    'runaway': 'keeping away from enemies',
+    # combat style
+    'tank aoe': 'holding the attention of multiple enemies',
+    'behind': 'striking from behind',
+    'ranged': 'fighting from range',
+    'close': 'fighting toe-to-toe',
+    'aoe': 'using sweeping attacks on groups',
+    'stealth': 'staying hidden when possible',
+}
+
+
+def _build_behavior_lines(strategies):
+    """Translate saved strategy sets into prompt lines.
+
+    Returns e.g. ["In a fight: holding the attention of
+    multiple enemies", "Out of combat: staying close and
+    following"], or [] if nothing player-meaningful is set.
+    """
+    if not strategies:
+        return []
+    labels = (
+        ('combat', 'In a fight'),
+        ('noncombat', 'Out of combat'),
+    )
+    lines = []
+    for key, label in labels:
+        described = [
+            _STRATEGY_DESCRIPTIONS[name]
+            for name in strategies.get(key, [])
+            if name in _STRATEGY_DESCRIPTIONS
+        ]
+        if described:
+            lines.append(f"{label}: {'; '.join(described)}")
+    return lines
 
 
 # ============================================================
@@ -181,13 +251,15 @@ def build_companion_prompt(
     bot, traits, tone, backstory,
     memories, chat_history,
     player_name, player_message, mode,
-    *, max_lines, config,
+    *, max_lines, config, behavior_lines=None,
+    knowledge_block=None, extra_context=None,
 ):
     """Build a rich companion conversation prompt.
 
     Full backstory (no RNG gate), all shared memories,
-    extended chat history, and an instruction to speak with
-    depth across up to max_lines. No brevity guidelines.
+    extended chat history, current standing orders (if any),
+    and an instruction to speak with depth across up to
+    max_lines. No brevity guidelines.
     """
     bot_name = bot['name']
     trait_str = ', '.join([t for t in traits if t])
@@ -202,6 +274,24 @@ def build_companion_prompt(
     parts.append("<backstory>")
     parts.append(backstory.strip())
     parts.append("</backstory>")
+
+    if behavior_lines:
+        parts.append("")
+        parts.append("<current_behavior>")
+        parts.append(
+            "What you're currently doing, per your "
+            "standing orders:"
+        )
+        for line in behavior_lines:
+            parts.append(f"  - {line}")
+        parts.append("</current_behavior>")
+        parts.append(
+            "You know what you've been asked to do. Let "
+            "it inform your answer when it's relevant -- "
+            "for instance if asked why you're waiting "
+            "somewhere -- but don't recite your orders "
+            "unprompted."
+        )
 
     if memories:
         parts.append("")
@@ -231,6 +321,12 @@ def build_companion_prompt(
         f"{player_name} just said to you: "
         f"\"{player_message}\""
     )
+
+    if knowledge_block:
+        parts.append(knowledge_block)
+
+    if extra_context:
+        parts.append(extra_context)
 
     parts.append("")
     parts.append(
@@ -305,6 +401,7 @@ def handle_companion_player_msg(
     db, client, config, event_id, group_id,
     bot, traits, stored_tone,
     player_name, player_message,
+    extra_context=None,
 ):
     """Generate and deliver a companion reply.
 
@@ -361,11 +458,32 @@ def handle_companion_player_msg(
             _DEFAULT_MAX_LINES,
         )
 
+        # Standing orders from mod-playerbots, if enabled
+        # and available. Empty list = block omitted.
+        behavior_lines = []
+        if _cfg_int(
+            config,
+            'LLMChatter.Companion.BehaviorContext.Enable',
+            _DEFAULT_BEHAVIOR_ENABLE,
+        ):
+            behavior_lines = _build_behavior_lines(
+                get_bot_strategies(db, bot_guid, config)
+            )
+
+        # Ground factual gameplay questions in real
+        # world-DB data ('' when not a data question).
+        knowledge_block = lookup_game_knowledge(
+            client, config, player_message,
+        )
+
         prompt = build_companion_prompt(
             bot, traits, stored_tone, backstory,
             memories, chat_history,
             player_name, player_message, mode,
             max_lines=max_lines, config=config,
+            behavior_lines=behavior_lines,
+            knowledge_block=knowledge_block,
+            extra_context=extra_context,
         )
 
         max_tokens = _cfg_int(

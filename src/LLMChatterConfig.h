@@ -14,6 +14,7 @@
 
 #include "Define.h"
 #include <string>
+#include <vector>
 
 class LLMChatterConfig
 {
@@ -48,6 +49,23 @@ public:
     uint32 _partyGateContextualMinGapSeconds;
     uint32 _partyGateResponsiveMinGapSeconds;
     uint32 _partyGateUrgentMinGapSeconds;
+
+    // Guild / whisper forwarding
+    bool _guildChatterEnable;
+    bool _whisperChatterEnable;
+
+    // Solo-bot experience events
+    bool _soloChatterEnable;
+    uint32 _soloKillChance;
+    uint32 _soloLevelupChance;
+    uint32 _soloDeathChance;
+    uint32 _soloBotCooldown;
+
+    // LLM-issued playerbot commands (Tier 1)
+    bool _commandsEnable;
+    uint32 _commandsPollMs;
+    bool _commandsRequireSameGroup;
+    std::vector<std::string> _commandsAllowlist;
 
     // Event system settings
     bool _useEventSystem;

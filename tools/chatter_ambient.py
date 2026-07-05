@@ -504,6 +504,12 @@ def process_statement(
             length_hint=rng_length,
         )
 
+    # Guild culture bleed (lazy import).
+    from chatter_guild import get_bot_culture_line
+    prompt += get_bot_culture_line(
+        db, client, config, bot['guid'],
+    )
+
     # Call LLM
     if speaker_talent:
         zone_meta['speaker_talent'] = (
@@ -756,6 +762,15 @@ def process_conversation(
             recent_messages=recent_msgs,
             speaker_talent_context=speaker_talent,
             zone_id=zone_id,
+        )
+
+    # Guild culture bleed: one third-person line per
+    # guilded speaker (lazy import).
+    from chatter_guild import get_named_culture_line
+    for b in bots:
+        prompt += get_named_culture_line(
+            db, client, config,
+            b['guid'], b['name'],
         )
 
     # Call LLM

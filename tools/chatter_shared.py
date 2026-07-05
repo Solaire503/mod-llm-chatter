@@ -1699,6 +1699,7 @@ def run_single_reaction(
     delivery_policy: str = None,
     delivery_reason: str = None,
     owner_subsystem: str = None,
+    player_guid: int = None,
 ) -> Dict[str, Any]:
     """Run shared single-message reaction pipeline.
 
@@ -1813,6 +1814,7 @@ def run_single_reaction(
             delivery_policy=delivery_policy,
             delivery_reason=delivery_reason,
             owner_subsystem=owner_subsystem,
+            player_guid=player_guid,
         )
     except Exception:
         logger.error(
@@ -1859,8 +1861,10 @@ def find_addressed_bot(
         return no_match
     msg_lower = message.lower()
 
-    # Pass 1: exact whole-word match
+    # Pass 1: exact whole-word match (collect all,
+    # ordered by position in the message)
     name_hint = None
+    exact_matches = []
     for name in bot_names:
         if not name:
             continue
@@ -1877,13 +1881,24 @@ def find_addressed_bot(
                 or not msg_lower[end].isalpha()
             )
             if left_ok and right_ok:
-                name_hint = name
+                exact_matches.append((idx, name))
                 break
             idx = msg_lower.find(
                 name_lower, idx + 1
             )
-        if name_hint:
-            break
+    exact_matches.sort()
+    if exact_matches:
+        name_hint = exact_matches[0][1]
+
+    # Fast path: the message STARTS with a bot's name
+    # ("Lariaraden, wait here") — the address is
+    # unambiguous; skip the LLM confirmation call
+    # entirely (it costs a full model round-trip).
+    if exact_matches and exact_matches[0][0] == 0:
+        return {
+            'bot': exact_matches[0][1],
+            'multi_addressed': len(exact_matches) > 1,
+        }
 
     # Pass 2: fuzzy match on words (names >= 4 chars)
     if not name_hint:

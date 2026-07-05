@@ -990,6 +990,75 @@ EVENT_REGISTRY: Dict[str, EventSpec] = {
             'player_guid': (int, True),
         },
     ),
+
+    # -- C++ batch pipes (stub handlers until the --
+    # -- full implementations land)              --
+    'player_guild_msg': EventSpec(
+        handler_module='chatter_guild',
+        handler_func='process_guild_player_msg_event',
+        producer='LLMChatterPlayer.cpp',
+        priority='high',
+        description=(
+            'Real player spoke in guild chat; a '
+            'guild bot may reply'
+        ),
+        payload_fields={
+            'guild_id': (int, True),
+            'player_name': (str, True),
+            'player_message': (str, True),
+        },
+    ),
+    'player_whisper_msg': EventSpec(
+        handler_module='chatter_whisper',
+        handler_func='process_player_whisper_event',
+        producer='LLMChatterPlayer.cpp',
+        priority='high',
+        description=(
+            'Real player whispered a bot '
+            '(non-command text)'
+        ),
+        payload_fields={
+            'bot_guid': (int, True),
+            'player_name': (str, True),
+            'player_message': (str, True),
+        },
+    ),
+    'bot_solo_kill': EventSpec(
+        handler_module='chatter_solo',
+        handler_func='process_solo_kill_event',
+        producer='LLMChatterGroupCombat.cpp',
+        description=(
+            'Solo bot killed a boss/rare; may '
+            'brag in General'
+        ),
+        payload_fields={
+            'bot_guid': (int, True),
+            'creature_name': (str, True),
+        },
+    ),
+    'bot_solo_levelup': EventSpec(
+        handler_module='chatter_solo',
+        handler_func='process_solo_levelup_event',
+        producer='LLMChatterGroupCombat.cpp',
+        description=(
+            'Solo bot hit a milestone level; may '
+            'announce in General'
+        ),
+        payload_fields={
+            'bot_guid': (int, True),
+        },
+    ),
+    'bot_solo_death': EventSpec(
+        handler_module='chatter_solo',
+        handler_func='process_solo_death_event',
+        producer='LLMChatterGroupCombat.cpp',
+        description=(
+            'Solo bot died; may grumble in General'
+        ),
+        payload_fields={
+            'bot_guid': (int, True),
+        },
+    ),
 }
 
 

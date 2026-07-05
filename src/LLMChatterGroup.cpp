@@ -50,6 +50,8 @@
 #include "Playerbots.h"
 #include "RandomPlayerbotMgr.h"
 #include "ScriptMgr.h"
+#include "WorldSession.h"
+#include "WorldSessionMgr.h"
 #include "Spell.h"
 #include "World.h"
 #include "WorldSession.h"
@@ -230,7 +232,8 @@ bool GroupHasRealPlayer(Group* group)
 // Pick a random bot from the group, optionally
 // excluding a specific player (e.g. the killer)
 Player* GetRandomBotInGroup(
-    Group* group, Player* exclude)
+    Group* group, Player* exclude,
+    bool requireAlive)
 {
     if (!group)
         return nullptr;
@@ -243,7 +246,7 @@ Player* GetRandomBotInGroup(
         Player* member = itr->GetSource();
         if (member && IsPlayerBot(member)
             && member != exclude
-            && member->IsAlive())
+            && (!requireAlive || member->IsAlive()))
             bots.push_back(member);
     }
 
@@ -251,6 +254,60 @@ Player* GetRandomBotInGroup(
         return nullptr;
 
     return bots[urand(0, bots.size() - 1)];
+}
+
+// True when at least one REAL player is currently in
+// the zone. Gates solo-bot experience events so lone
+// bots only narrate where someone can hear them.
+bool ZoneHasRealPlayer(uint32 zoneId)
+{
+    WorldSessionMgr::SessionMap const& sessions =
+        sWorldSessionMgr->GetAllSessions();
+    for (auto const& pair : sessions)
+    {
+        WorldSession* session = pair.second;
+        if (!session)
+            continue;
+        Player* p = session->GetPlayer();
+        if (!p || !p->IsInWorld())
+            continue;
+        if (IsPlayerBot(p))
+            continue;
+        if (p->GetZoneId() == zoneId)
+            return true;
+    }
+    return false;
+}
+
+// Shared gate for solo-bot experience events: feature
+// on, subject is a bot, real audience in zone, chance
+// roll, per-bot cooldown. Claims the cooldown on
+// success. World-thread only (like the other cooldown
+// maps here) — no lock needed.
+bool SoloEventAllowed(Player* bot, uint32 chance)
+{
+    if (!sLLMChatterConfig->_soloChatterEnable)
+        return false;
+    if (!bot || !IsPlayerBot(bot))
+        return false;
+    if (!chance || urand(1, 100) > chance)
+        return false;
+
+    // Cheap per-bot cooldown BEFORE the session scan.
+    uint32 guid = bot->GetGUID().GetCounter();
+    time_t now = time(nullptr);
+    auto it = _soloBotCooldowns.find(guid);
+    if (it != _soloBotCooldowns.end()
+        && (now - it->second)
+           < (time_t)sLLMChatterConfig
+               ->_soloBotCooldown)
+        return false;
+
+    if (!ZoneHasRealPlayer(bot->GetZoneId()))
+        return false;
+
+    _soloBotCooldowns[guid] = now;
+    return true;
 }
 
 // Count bots in a group (for dynamic chance scaling)
@@ -331,6 +388,10 @@ std::map<uint32, time_t>
     _botOomCooldowns;
 std::map<uint32, time_t>
     _botAggroCooldowns;
+
+// -- Per-bot solo experience event cooldowns --
+std::map<uint32, time_t>
+    _soloBotCooldowns;
 
 // -- Emote cooldown maps --
 std::unordered_map<uint32, time_t>
@@ -482,8 +543,19 @@ bool IsLikelyPlayerbotControlCommand(
     {
         std::string firstWord =
             msg.substr(0, firstSpace);
-        if (exactCommands.find(firstWord)
-            != exactCommands.end())
+        // Natural-speech words: players say "follow
+        // me" / "stay here" conversationally, and the
+        // Tier 1 command classifier handles those.
+        // Only the BARE word is playerbot syntax.
+        static std::unordered_set<std::string>
+            naturalWords = {
+                "follow", "stay", "flee",
+                "grind", "attack"
+            };
+        if (naturalWords.find(firstWord)
+            == naturalWords.end()
+            && exactCommands.find(firstWord)
+               != exactCommands.end())
             return true;
     }
 

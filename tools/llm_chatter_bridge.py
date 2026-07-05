@@ -80,6 +80,7 @@ from chatter_general import (
     process_general_player_msg_event,
 )
 from chatter_cache import refill_precache_pool
+from chatter_whisper import check_initiated_whispers
 from chatter_event_registry import (
     build_handler_map,
     validate_registry,
@@ -358,6 +359,9 @@ def fetch_pending_events(db, config, max_count):
               OR e.event_type = 'player_general_msg'
               OR e.event_type = 'player_enters_zone'
               OR e.event_type LIKE 'proximity_%%'
+              OR e.event_type = 'player_guild_msg'
+              OR e.event_type = 'player_whisper_msg'
+              OR e.event_type LIKE 'bot_solo%%'
               OR (
                   EXISTS (
                       SELECT 1 FROM characters c
@@ -1768,6 +1772,11 @@ def main():
         'BotQuestionCheckInterval',
         30
     ))
+    last_whisper_init_check = 0
+    whisper_init_interval = int(config.get(
+        'LLMChatter.Whisper.Initiate.PollSeconds',
+        120
+    ))
 
     executor = ThreadPoolExecutor(
         max_workers=max_concurrent + 4
@@ -1782,6 +1791,7 @@ def main():
     bot_question_future = None
     legacy_future = None
     tone_regen_future = None
+    whisper_init_future = None
     # Track online→offline transition for full wipe
     was_players_online = True
 
@@ -1865,6 +1875,15 @@ def main():
                     "tone-regeneration"
                 )
                 tone_regen_future = None
+            if (
+                whisper_init_future
+                and whisper_init_future.done()
+            ):
+                _harvest_future(
+                    whisper_init_future,
+                    "whisper-initiate"
+                )
+                whisper_init_future = None
 
             # DB connection with proper lifecycle
             db = None
@@ -2060,6 +2079,26 @@ def main():
                             _run_in_worker,
                             "bot-question",
                             check_bot_questions,
+                            client, config
+                        )
+                    )
+
+                # Bot-initiated whispers -> worker pool
+                if (
+                    players_online
+                    and not whisper_init_future
+                    and current_time
+                    - last_whisper_init_check
+                    >= whisper_init_interval
+                ):
+                    last_whisper_init_check = (
+                        current_time
+                    )
+                    whisper_init_future = (
+                        executor.submit(
+                            _run_in_worker,
+                            "whisper-initiate",
+                            check_initiated_whispers,
                             client, config
                         )
                     )

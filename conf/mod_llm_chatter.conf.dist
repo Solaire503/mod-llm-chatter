@@ -2059,11 +2059,11 @@ LLMChatter.Companion.Enable = 1
 
 #
 #   LLMChatter.Companion.BackstoryMinChars
-#       Minimum backstory length (characters) for a bot to be
-#       treated as a companion. Hand-authored companions have long
-#       backstories; this is a pragmatic proxy until an explicit
-#       flag column exists.
-#       Default: 500
+#       DEPRECATED (2026-07-05): companionship is now the explicit
+#       llm_bot_identities.is_manual flag; the backstory-length proxy
+#       over-matched auto-generated backstories. Flag companions with:
+#       UPDATE llm_bot_identities SET is_manual = 1 WHERE bot_name = '...';
+#       This key is ignored.
 #
 LLMChatter.Companion.BackstoryMinChars = 500
 
@@ -2108,6 +2108,293 @@ LLMChatter.Companion.MaxLines = 4
 #       Default: 60
 #
 LLMChatter.Companion.IdleSuppressSeconds = 60
+
+#
+#   LLMChatter.Companion.BehaviorContext.Enable
+#       Include the bot's current playerbot standing orders (stay,
+#       follow, passive, tank aoe, ...) in companion prompts, read
+#       from the mod-playerbots database (playerbots_db_store), so
+#       the companion can talk about what it has actually been told
+#       to do. Requires mod-playerbots' database on the same MySQL
+#       server; silently skipped if unavailable.
+#       Default: 1
+#
+LLMChatter.Companion.BehaviorContext.Enable = 1
+
+#
+#   LLMChatter.PlayerbotsDatabase.Name
+#       Name of the mod-playerbots database used for behavior
+#       context lookups.
+#       Default: acore_playerbots
+#
+LLMChatter.PlayerbotsDatabase.Name = acore_playerbots
+
+###############################################################################
+# CONTEXTUAL BROADCASTING [BRIDGE]
+#
+#   When a notable group event fires (boss/rare kill, death, level-up,
+#   quest completion, achievement, wipe), the reacting bot may ALSO post a
+#   casual line about it in its zone's General channel. Broadcast lines are
+#   stored in llm_general_chat_history, so bots replying in General know
+#   what other bots have actually been through.
+#   Requires LLMChatter.GeneralChannel.Enable (C++ delivery gate).
+###############################################################################
+
+#
+#   LLMChatter.Broadcast.Enable
+#       Master switch for contextual General-channel broadcasting.
+#       Default: 1
+#
+LLMChatter.Broadcast.Enable = 1
+
+#
+#   LLMChatter.Broadcast.Chance.Kill
+#   LLMChatter.Broadcast.Chance.Death
+#   LLMChatter.Broadcast.Chance.Levelup
+#   LLMChatter.Broadcast.Chance.QuestComplete
+#   LLMChatter.Broadcast.Chance.Achievement
+#   LLMChatter.Broadcast.Chance.Wipe
+#       Per-event-type percentage chance (0-100) that a successful party
+#       reaction also produces a General broadcast. Kill broadcasts only
+#       consider boss/rare kills.
+#
+LLMChatter.Broadcast.Chance.Kill = 25
+LLMChatter.Broadcast.Chance.Death = 15
+LLMChatter.Broadcast.Chance.Levelup = 30
+LLMChatter.Broadcast.Chance.QuestComplete = 10
+LLMChatter.Broadcast.Chance.Achievement = 25
+LLMChatter.Broadcast.Chance.Wipe = 25
+
+#
+#   LLMChatter.Broadcast.BotCooldownSeconds
+#       Minimum seconds between two broadcasts from the same bot.
+#       Default: 600
+#
+LLMChatter.Broadcast.BotCooldownSeconds = 600
+
+#
+#   LLMChatter.Broadcast.ZoneGapSeconds
+#       Minimum seconds between any two broadcasts in the same zone.
+#       Default: 120
+#
+LLMChatter.Broadcast.ZoneGapSeconds = 120
+
+#
+#   LLMChatter.Broadcast.HistoryLines
+#       Recent General chat lines from the zone included in the broadcast
+#       prompt for context and anti-repetition. 0 disables.
+#       Default: 6
+#
+LLMChatter.Broadcast.HistoryLines = 6
+
+###############################################################################
+# GAME KNOWLEDGE SYSTEM [BRIDGE]
+#
+#   When a player asks a factual gameplay question in party or General
+#   chat ("who gives The People's Militia?", "where is Marshal Dughan?",
+#   "who drops the Staff of Westfall?"), the replying bot is handed
+#   verified rows from the world database (quests, quest givers/enders,
+#   NPC spawn zones, item drops/vendors) and instructed to answer ONLY
+#   from them -- never from the model's own training data. If the
+#   database has no match, the bot admits it doesn't know instead of
+#   guessing. Detection uses the QuickAnalyze model, gated by a cheap
+#   question-shape prefilter.
+###############################################################################
+
+#
+#   LLMChatter.Knowledge.Enable
+#       Master switch for database-grounded gameplay answers.
+#       Default: 1
+#
+LLMChatter.Knowledge.Enable = 1
+
+###############################################################################
+# GUILD & WHISPER FORWARDING [SERVER]
+#
+#   Forward real players' guild-chat messages and bot-directed whispers to
+#   the bridge as events (player_guild_msg / player_whisper_msg), so bots
+#   can reply in guild chat and hold 1:1 whisper conversations. Playerbot
+#   control commands ("follow", "co +aoe") are never forwarded — playerbots
+#   handles those itself. Requires the Python handlers (chatter_guild /
+#   chatter_whisper) to be implemented and registered.
+###############################################################################
+
+#
+#   LLMChatter.GuildChatter.Enable
+#       Forward guild chat and deliver bot guild replies.
+#       Default: 1
+#
+LLMChatter.GuildChatter.Enable = 1
+
+#
+#   LLMChatter.WhisperChatter.Enable
+#       Forward conversational whispers to bots and deliver replies.
+#       Default: 1
+#
+LLMChatter.WhisperChatter.Enable = 1
+
+#
+#   LLMChatter.WhisperChatter bridge tuning [BRIDGE]
+#       HistoryLimit: whisper lines of 1:1 context (default 20)
+#       MaxTokens: companion whisper reply budget (default 450)
+#       MaxLines: max sequential lines per companion whisper (default 3)
+#
+LLMChatter.Whisper.HistoryLimit = 20
+LLMChatter.Whisper.MaxTokens = 450
+LLMChatter.Whisper.MaxLines = 3
+
+#
+#   LLMChatter.GuildChatter bridge tuning [BRIDGE]
+#       ReplyChance: percent chance a non-question guild line gets a
+#           reply (questions always eligible; default 60)
+#       ReplyCooldown: min seconds between replies per guild (default 45)
+#       HistoryLimit: guild chat lines of context (default 15)
+#
+LLMChatter.GuildChatter.ReplyChance = 60
+LLMChatter.GuildChatter.ReplyCooldown = 45
+LLMChatter.GuildChatter.HistoryLimit = 15
+
+#
+#   LLMChatter.GuildChatter.CultureEnable / CultureAutoGenerate [BRIDGE]
+#       Guild culture: a per-guild personality layer for member bots,
+#       stored in llm_guild_culture. Auto-generated from the guild NAME
+#       on first encounter; edit the row to hand-tune a guild's vibe
+#       (the bridge never overwrites an existing row).
+#
+LLMChatter.GuildChatter.CultureEnable = 1
+LLMChatter.GuildChatter.CultureAutoGenerate = 1
+
+#
+#   LLMChatter.Whisper.Initiate.* [BRIDGE]
+#       Bots rarely whisper the player FIRST — only into silence.
+#       Eligible: bots on the player's friends list, is_manual
+#       companions, and (if IncludeGuild=1) guild-mates. Gates stack:
+#       pair must be whisper-silent QuietHours, a pair only rolls once
+#       per AttemptHours, the roll is Chance% (LoginChance% when the
+#       player returns after MinAwayHours+), and at most
+#       DailyCapPerPlayer initiations per player per day. Player
+#       replies are handled by the normal whisper path (unlimited).
+#
+LLMChatter.Whisper.Initiate.Enable = 1
+LLMChatter.Whisper.Initiate.PollSeconds = 120
+LLMChatter.Whisper.Initiate.QuietHours = 12
+LLMChatter.Whisper.Initiate.AttemptHours = 4
+LLMChatter.Whisper.Initiate.Chance = 25
+LLMChatter.Whisper.Initiate.LoginChance = 50
+LLMChatter.Whisper.Initiate.MinAwayHours = 8
+LLMChatter.Whisper.Initiate.DailyCapPerPlayer = 2
+LLMChatter.Whisper.Initiate.IncludeGuild = 0
+
+#
+#   LLMChatter.GuildCulture.Bleed [BRIDGE]
+#       Let guild culture color member bots EVERYWHERE (General, party
+#       reactions, proximity, whispers, broadcasts, ambient chatter) —
+#       not just guild chat. This is how a <Velvet Silk> member ends up
+#       being unnecessarily sultry in a pickup group.
+#       Default: 1
+#
+LLMChatter.GuildCulture.Bleed = 1
+
+#
+#   LLMChatter.Commands.ExpiresSeconds [BRIDGE]
+#       Queued commands older than this are ignored by the poller
+#       (protects against a stalled worldserver executing stale orders).
+#       Default: 30
+#
+LLMChatter.Commands.ExpiresSeconds = 30
+
+#
+#   LLMChatter.Whisper.ReplyMinSeconds [BRIDGE]
+#       Debounce: minimum seconds between processed whisper replies per
+#       (bot, player) pair. Rapid-fire whispers beyond this are skipped
+#       (each reply costs multiple LLM calls).
+#       Default: 5
+#
+LLMChatter.Whisper.ReplyMinSeconds = 5
+
+###############################################################################
+# SOLO-BOT EXPERIENCE EVENTS [SERVER]
+#
+#   Ungrouped bots (and bot-only groups) queue events for notable moments
+#   (boss/rare kills, milestone level-ups, deaths) so they can post about
+#   them in General. Only fires when a REAL player is in the zone, with a
+#   per-bot cooldown, so the world hums without flooding.
+###############################################################################
+
+#
+#   LLMChatter.SoloChatter.Enable
+#       Master switch for solo-bot experience events.
+#       Default: 1
+#
+LLMChatter.SoloChatter.Enable = 1
+
+#
+#   LLMChatter.SoloChatter.KillChance
+#       Chance (0-100) a solo boss/rare kill queues an event.
+#       Default: 15
+#
+LLMChatter.SoloChatter.KillChance = 15
+
+#
+#   LLMChatter.SoloChatter.LevelupChance
+#       Chance (0-100) a solo milestone level-up (x0) queues an event.
+#       Default: 50
+#
+LLMChatter.SoloChatter.LevelupChance = 50
+
+#
+#   LLMChatter.SoloChatter.DeathChance
+#       Chance (0-100) a solo bot death queues an event.
+#       Default: 10
+#
+LLMChatter.SoloChatter.DeathChance = 10
+
+#
+#   LLMChatter.SoloChatter.BotCooldownSeconds
+#       Minimum seconds between solo events from the same bot.
+#       Default: 900
+#
+LLMChatter.SoloChatter.BotCooldownSeconds = 900
+
+###############################################################################
+# LLM-ISSUED PLAYERBOT COMMANDS [SERVER] (Tier 1)
+#
+#   The bridge classifies actionable player requests ("hang back and keep
+#   me healed") into playerbot command strings queued in
+#   llm_chatter_commands. The worldserver validates each against the
+#   allowlist below and injects it via PlayerbotAI::HandleCommand with the
+#   REQUESTING player as sender — playerbots' own permission model applies.
+###############################################################################
+
+#
+#   LLMChatter.Commands.Enable
+#       Master switch for executing LLM-issued bot commands.
+#       Default: 1
+#
+LLMChatter.Commands.Enable = 1
+
+#
+#   LLMChatter.Commands.PollMs
+#       How often (ms) the worldserver polls llm_chatter_commands.
+#       Default: 1000
+#
+LLMChatter.Commands.PollMs = 1000
+
+#
+#   LLMChatter.Commands.RequireSameGroup
+#       Only execute when the requester is in the bot's group.
+#       Default: 1
+#
+LLMChatter.Commands.RequireSameGroup = 1
+
+#
+#   LLMChatter.Commands.Allowlist
+#       Comma-separated commands the LLM may issue. A trailing space makes
+#       an entry a prefix rule ("co " allows "co +tank aoe"). Anything not
+#       matching is rejected and logged. Keep this conservative.
+#       Default: follow,stay,flee,grind,passive,attack,co ,nc ,reset,los,formation
+#
+LLMChatter.Commands.Allowlist = "follow,stay,flee,grind,passive,attack,co ,nc ,reset,los,formation"
 
 ###############################################################################
 # EMOTE REACTION SYSTEM

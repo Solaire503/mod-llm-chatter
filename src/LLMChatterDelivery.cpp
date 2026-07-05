@@ -215,6 +215,15 @@ void DeliverPendingMessagesImpl()
         && !sLLMChatterConfig->_generalChannelEnable)
         return;
 
+    // Same consume-when-disabled semantics for the
+    // guild and whisper channels.
+    if (channel == "guild"
+        && !sLLMChatterConfig->_guildChatterEnable)
+        return;
+    if (channel == "whisper"
+        && !sLLMChatterConfig->_whisperChatterEnable)
+        return;
+
     // Master GroupChatter toggle. Party/raid channels are
     // shared by group, raid-boss, and BG chatter, so we gate
     // on owner_subsystem (the authoritative classifier set at
@@ -527,6 +536,45 @@ void DeliverPendingMessagesImpl()
             else if (channel == "say")
             {
                 sent = ai->Say(processedMessage);
+            }
+            else if (channel == "guild")
+            {
+                sent = ai->SayToGuild(
+                    processedMessage);
+            }
+            else if (channel == "whisper")
+            {
+                if (playerGuid)
+                {
+                    ObjectGuid whisperTargetGuid =
+                        ObjectGuid::Create<
+                            HighGuid::Player>(
+                            playerGuid);
+                    Player* whisperTarget =
+                        ObjectAccessor::FindPlayer(
+                            whisperTargetGuid);
+                    if (whisperTarget)
+                    {
+                        sent = ai->Whisper(
+                            processedMessage,
+                            whisperTarget
+                                ->GetName());
+                        // Log the outbound side of
+                        // the whisper conversation.
+                        if (sent)
+                            CharacterDatabase.Execute(
+                                "INSERT INTO "
+                                "llm_whisper_history "
+                                "(bot_guid, "
+                                "player_guid, "
+                                "from_bot, message) "
+                                "VALUES ({}, {}, 1, "
+                                "'{}')",
+                                botGuid, playerGuid,
+                                EscapeString(
+                                    processedMessage));
+                    }
+                }
             }
             else if (channel == "yell")
             {

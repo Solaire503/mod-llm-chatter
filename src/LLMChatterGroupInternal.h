@@ -149,6 +149,10 @@ extern std::map<uint32, time_t>
 extern std::map<uint32, time_t>
     _botAggroCooldowns;
 
+// -- Per-bot solo experience event cooldowns --
+extern std::map<uint32, time_t>
+    _soloBotCooldowns;
+
 // -- Emote cooldown maps --
 extern std::unordered_map<uint32, time_t>
     _emoteReactCooldowns;
@@ -180,10 +184,13 @@ extern std::unordered_set<uint32>
 
 bool GroupHasRealPlayer(Group* group);
 Player* GetRandomBotInGroup(
-    Group* group, Player* exclude = nullptr);
+    Group* group, Player* exclude = nullptr,
+    bool requireAlive = true);
 uint32 CountBotsInGroup(Group* group);
 bool IsLikelyPlayerbotControlCommand(
     std::string const& message);
+bool ZoneHasRealPlayer(uint32 zoneId);
+bool SoloEventAllowed(Player* bot, uint32 chance);
 
 // Pre-cache instant reaction helpers
 bool TryConsumeCachedReaction(

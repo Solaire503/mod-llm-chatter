@@ -325,6 +325,15 @@ def run_group_handler(
                 "</backstory>"
             )
 
+        # 11c. Guild culture bleed (lazy import, same
+        # pattern as chatter_companion above).
+        from chatter_guild import (
+            get_bot_culture_line,
+        )
+        prompt += get_bot_culture_line(
+            db, client, config, bot_guid,
+        )
+
         # 12. Compute delay
         actual_delay = (
             delay_seconds(ctx)
@@ -390,6 +399,18 @@ def run_group_handler(
                     event_type_label,
                     exc_info=True,
                 )
+
+        # 16b. Contextual broadcast: the bot may also
+        # mention notable events in its zone's General
+        # channel. Internally chance-gated and rate-
+        # limited; never raises. Lazy import (same
+        # pattern as chatter_companion above).
+        from chatter_broadcast import (
+            maybe_broadcast_event,
+        )
+        maybe_broadcast_event(
+            db, client, config, ctx, event_type_label,
+        )
 
         # 17. Mark completed
         _mark_event(db, event_id, 'completed')
